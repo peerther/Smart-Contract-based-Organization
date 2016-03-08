@@ -1,4 +1,4 @@
-# Smart Contract-based Organization
+# Smart Contract-based Organization (on Ethereum)
 
 SMBO is an initiative to have an open-source smart contract that can be duplicated and run on the Ethereum to replace the memorandum and enforcement of company's policy. In the beginning, this contract's goal is to help startups easily select from templates and manage their company's shares, debts, and shareholders. In the future, the goal is for this contract to be used by parties to share ownership of virtual anything, and vote on how those shares are dispersed. 
 
