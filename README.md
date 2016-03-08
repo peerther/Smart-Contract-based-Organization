@@ -12,8 +12,6 @@ Please send pull requests to the develop branch, as all pull requests to master 
 
 
 
-This text you see here is *actually* written in Markdown! To get a feel for Markdown's syntax, type some text into the left window and watch the results in the right.
-
 ### Version
 0.0.1
 
