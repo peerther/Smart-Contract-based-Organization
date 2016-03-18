@@ -1,9 +1,7 @@
 contract Company {
     
-    //TODO: Add comments
-    //TODO: Standardize styling a littlbe better, whether to pre_ every local variable or only arguments
-    address owner;
-    address treasureChest;
+    address public owner;
+    address public treasureChest;
     
     uint public commonShares;
     uint public preferredShares;
@@ -35,11 +33,15 @@ contract Company {
     }
     struct VotesFor {
         uint sharesVotingFor;
+    }    
+    struct VotesTarget {
+        mapping(uint => VotesFor) subject;
     }
     struct VoterAddress {
         bool alreadyVoted;
         uint lastVotedSubject; //helps clear votes for any previous amounts/subjects pertaining to this vote type
         mapping(uint => VotesFor) subject;
+        mapping(address => VotesTarget) target;
     }
     
     //votingFor["newShareValue"].subject[newValue].sharesVotingFor;
@@ -47,11 +49,149 @@ contract Company {
     ShareOwner[] shareOwnership;
     mapping (string => Voting) votingFor;
     
-    modifier onlyowner { if (msg.sender == owner) _ }
+    modifier onlyowner { 
+        if (msg.sender != owner)
+            throw;
+        else  _ }
+    
+    modifier onlyCommonOwner { 
+        uint _ownerIndex = checkIfAlreadyOwner(msg.sender);
+        if (shareOwnership[_ownerIndex].isCommonShare[true].sharesOwned > 0) _ 
+    }
     
     modifier onlyShareholder { 
         if (checkIfAlreadyOwner(msg.sender) <= shareOwnership.length && 
         shareOwnership.length > 0) _
+    }
+    
+    function Company() {
+        owner = msg.sender;
+        companyId = CompanyIdentity ("New Company", now, now);
+        createStartup();
+        //could specifiy an address, but simply using the owner is SAFER, to avoid invalid addresses or typos
+        changeChestAddress(owner);
+    }
+    
+    //Fallback - refund any ether sent, that doesn't do some sort of function call
+    function () {
+        throw;
+    }
+    
+    function createStartup() private{
+        commonShares = 100;
+        preferredShares = 100;
+        sharePrice = 100 szabo; //0.0001 ether
+        majority = 50; //in % format can set custom percent for majority vote requirement
+    }
+    
+    function issueShares(address _ownerAddress, bool _isCommon, uint _amount) onlyowner {
+        uint availableSharesOfType = _isCommon ? commonShares : preferredShares;
+        availableSharesOfType -= checkTotalIssuedShares(_isCommon);
+        if(availableSharesOfType < _amount)
+            throw;
+        
+        uint _ownerIndex = checkIfAlreadyOwner(_ownerAddress);
+        if (_ownerIndex == shareOwnership.length)
+            throw;
+            
+        shareOwnership[_ownerIndex].isCommonShare[_isCommon].sharesOwned += _amount;
+    }
+    
+    //must add before you can issue
+    function addOwner(address _ownerAddress, string _ownerName) {
+        uint _ownerIndex = checkIfAlreadyOwner(_ownerAddress);
+        if (_ownerIndex <= shareOwnership.length && shareOwnership.length > 0)
+            throw;
+            
+        shareOwnership.push(ShareOwner(_ownerAddress, _ownerName));
+    }
+    //Not Working again...???
+    //TODO: REMOVE ANY VOTES AND ANY INSUFFICIENT SHARES FOR SALE and TRANSFERS
+    //Only allows common shares to be removed by common owners
+    function removeSharesFromOwner(address _ownerAddress, uint _numSharesToRemove) onlyCommonOwner {
+        //The one calling to revoke the shares of a certain shareholder
+        uint _revokerIndex = checkIfAlreadyOwner(msg.sender);
+        uint _revokerShares = shareOwnership[_revokerIndex].isCommonShare[true].sharesOwned;
+        
+        //The shareholder that is to have their shares revoked
+        uint _ownerIndex = checkIfAlreadyOwner(_ownerAddress);
+        uint _ownerShares = shareOwnership[_ownerIndex].isCommonShare[true].sharesOwned;
+        
+        //Check if revoker is valid common share owner, and if revokee actually has any common shares to be revoked
+        if ( _ownerIndex > shareOwnership.length ||
+        _ownerShares == 0 ||
+        _ownerShares < _numSharesToRemove || 
+        _numSharesToRemove < 1)
+            throw;
+            
+        if (votingFor["revokeShares"].ownerAddress[msg.sender].alreadyVoted) {
+            uint _lastVoted = votingFor["revokeShares"].ownerAddress[msg.sender].lastVotedSubject;
+            if (_lastVoted > 0)
+                delete votingFor["revokeShares"].ownerAddress[msg.sender].target[_ownerAddress].subject[_lastVoted];
+        }
+        else {
+            votingFor["revokeShares"].ownersVotedArray.push(msg.sender);
+            votingFor["revokeShares"].ownerAddress[msg.sender].alreadyVoted = true;
+        }
+        
+        votingFor["revokeShares"].ownerAddress[msg.sender].target[_ownerAddress].subject[_numSharesToRemove].sharesVotingFor = _revokerShares;
+        votingFor["revokeShares"].ownerAddress[msg.sender].lastVotedSubject = _numSharesToRemove;
+        
+        uint _totalVotes = countTargetedVotes("revokeShares", _numSharesToRemove, _ownerAddress);
+
+        if ((_totalVotes * 100) / commonShares >= majority)
+            shareOwnership[_ownerIndex].isCommonShare[true].sharesOwned -= _numSharesToRemove;
+    }
+    
+    function forwardToChest(uint _amt) {
+        safeSend(treasureChest, _amt);
+    }
+    
+    //Formerly createOwner, renamed for a better fit name, if I understood explanation correctly
+    //Allows for chest address to be changed.
+    function changeChestAddress(address _chest) onlyowner {
+        treasureChest = _chest;
+    }
+    
+    //getPendingShares.
+    
+    function nameCompany(string _name) onlyowner {
+        companyId.name = _name;
+        companyId.nameSetTime = now;
+    }
+    
+    function saveArticles(string _article) onlyCommonOwner {
+        articles.push(_article);
+    }
+    
+    function setNewShareValue(uint _val, string _unit) onlyCommonOwner {
+        uint _newValue = _val * currencyCheck(_unit);
+            
+        uint _ownerIndex = checkIfAlreadyOwner(msg.sender);
+    
+        uint _commonShares = shareOwnership[_ownerIndex].isCommonShare[true].sharesOwned;
+            
+        uint _lastVoted = votingFor["newShareValue"].ownerAddress[msg.sender].lastVotedSubject;
+        
+        if (votingFor["newShareValue"].ownerAddress[msg.sender].alreadyVoted) {
+            if (_lastVoted > 0) 
+                votingFor["newShareValue"].ownerAddress[msg.sender].subject[_lastVoted].sharesVotingFor = 0;
+        }
+        else {
+            votingFor["newShareValue"].ownersVotedArray.push(msg.sender);
+            votingFor["newShareValue"].ownerAddress[msg.sender].alreadyVoted = true;
+        }
+        
+        /*if(countVotes("newShareValue", _newValue) == 0) 
+            votingFor["newShareValue"].proposalSubject.push(_newValue);*/
+            
+        votingFor["newShareValue"].ownerAddress[msg.sender].subject[_newValue].sharesVotingFor += _commonShares;
+        votingFor["newShareValue"].ownerAddress[msg.sender].lastVotedSubject = _newValue;
+        
+        //checkIfAlreadyOnVoterList(msg.sender, votingFor["newShareValue"]); prolly not needed
+        
+        if ((countVotes("newShareValue", _newValue)* 100) / commonShares >= majority)
+            sharePrice = _newValue;
     }
     
     function setSharesForSale(uint _amt, uint _price, string _unit, bool _isCommon) onlyShareholder {
@@ -71,13 +211,15 @@ contract Company {
         shareOwnership[_ownerIndex].isCommonShare[_isCommon].sharesForSale = _amt;
         shareOwnership[_ownerIndex].isCommonShare[_isCommon].shareSalePrice = _newValue;
         
-        //Remove shareholders votes once trade executed
+        //Remove shareholders votes once trade executed DONE in buy portion
     }
     
+    //TODO: FIX unable to buy when only 1 owner in array, must be checkownership function issue FIXED
     //price must be included to ensure buyer gets the shares for price they are expecting
     function buySharesFrom(string _buyerName,
         address _sellerAddress, 
-        uint _amt, uint _price, 
+        uint _amt, 
+        uint _price, 
         string _unit, 
         bool _isCommon) 
     {
@@ -95,8 +237,14 @@ contract Company {
             
         //Exchange approved, add buyer to owners if needed.
         uint _buyerIndex = checkIfAlreadyOwner(msg.sender);
-        if (_buyerIndex > shareOwnership.length)
+        if (_buyerIndex > shareOwnership.length) {
             shareOwnership.push(ShareOwner(msg.sender, _buyerName));
+            _buyerIndex -= 1;
+        }
+
+        
+
+        
         
         //ORDER MAY BE IMPORTANT HERE, TEST!!!!!
         shareOwnership[_sellerIndex].isCommonShare[_isCommon].sharesForSale -= _amt;
@@ -108,13 +256,14 @@ contract Company {
         shareOwnership[_buyerIndex].isCommonShare[_isCommon].sharesOwned += _amt;
         
         //After shares change hands, send funds
-        _sellerAddress.send(_transactionValue);
+        safeSend(_sellerAddress, _transactionValue);
         //Refund any remainder back to buyer
-        msg.sender.send(msg.value - _transactionValue);
+        safeSend(msg.sender, msg.value - _transactionValue); //change send
 
-            
+        
     }
     
+    //TODO Fix needs to be able to transfer irregardless of shareownership size, currently only works if more than 2, maybe, recheck
     function transferShares (address _receiver, uint _amt, bool _isCommon) onlyShareholder {
         uint _senderIndex = checkIfAlreadyOwner(msg.sender);
         
@@ -138,88 +287,7 @@ contract Company {
         shareOwnership[_receiverIndex].isCommonShare[_isCommon].sharesOwned += _amt;
     }
     
-    function Company() {
-        owner = msg.sender;
-        companyId = CompanyIdentity ("New Company", now, now);
-        createStartup();
-        //could specifiy an address, but simply using the owner is SAFER, to avoid invalid addresses or typos
-        changeChestAddress(owner);
-    }
-    
-    //Fallback - refund any ether sent, that doesn't do some sort of function call
-    function () {
-        throw;
-    }
-    
-    function createStartup() private{
-        commonShares = 100;
-        preferredShares = 100;
-        sharePrice = 100 szabo; //0.0001 ether
-        majority = 50; //in % format can set custom percent for majority vote requirement
-    }
-    
-    function issueShares(address _ownerAddress, bool _isCommon, uint _amount) {
-        uint availableSharesOfType = _isCommon ? commonShares : preferredShares;
-        availableSharesOfType -= checkTotalIssuedShares(_isCommon);
-        if(availableSharesOfType < _amount)
-            throw;
-        
-        uint _ownerIndex = checkIfAlreadyOwner(_ownerAddress);
-        if (_ownerIndex == shareOwnership.length)
-            throw;
-            
-        shareOwnership[_ownerIndex].isCommonShare[_isCommon].sharesOwned += _amount;
-    }
-    
-    //must add before you can issue
-    function addOwner(address _ownerAddress, string _ownerName) {
-        uint _ownerIndex = checkIfAlreadyOwner(_ownerAddress);
-        if (_ownerIndex <= shareOwnership.length && shareOwnership.length > 0)
-            throw;
-            
-        shareOwnership.push(ShareOwner(_ownerAddress, _ownerName));
-    }
-    
-    function removeSharesFromOwner(address _ownerAddress, uint _numSharesToRemove) {
-        //The one calling to revoke the shares of a certain shareholder
-        uint _revokerIndex = checkIfAlreadyOwner(msg.sender);
-        uint _revokerShares = shareOwnership[_revokerIndex].isCommonShare[true].sharesOwned;
-        
-        //The shareholder that is to have their shares revoked
-        uint _ownerIndex = checkIfAlreadyOwner(_ownerAddress);
-        uint _ownerShares = shareOwnership[_ownerIndex].isCommonShare[true].sharesOwned;
-        
-        //Check if revoker is valid common share owner, and if revokee actually has any common shares to be revoked
-        if (_revokerIndex > shareOwnership.length ||
-        _ownerIndex > shareOwnership.length ||
-        _revokerShares == 0 ||
-        _ownerShares == 0 ||
-        _ownerShares < _numSharesToRemove)
-            throw;
-            
-        uint _sharesForRevocation = shareOwnership[_ownerIndex].sharesToRevoke[_numSharesToRemove].sharesVotingFor;
-        _sharesForRevocation += _revokerShares;
-        
-        
-        //Fix double voting
-        if ((_sharesForRevocation * 100) / commonShares >= majority) {
-            //clear any votes for shares to be removed at this amount or higher, in case this owner is issued more common shares
-            for (uint i = _numSharesToRemove; i <= _ownerShares; i++) {
-                //MUST TEST, THEORETICALLY SHOULD WORK
-                delete shareOwnership[_ownerIndex].sharesToRevoke[i];
-            } 
-           shareOwnership[_ownerIndex].isCommonShare[true].sharesOwned -= _numSharesToRemove;
-            
-        }
-        
-    }
-    
-    //Formerly createOwner, renamed for a better fit name, if I understood explanation correctly
-    //Allows for chest address to be changed.
-    function changeChestAddress(address _chest) {
-        treasureChest = _chest;
-    }
-
+    //Constant functions
     function getCurrentShares(uint shareHolderIndex) constant returns (
         address _ownerAddress, 
         string _ownerName, 
@@ -238,72 +306,20 @@ contract Company {
         string _ownerName, 
         uint _commonSharesSelling,
         uint _commonSharesPrice,
-        string _commonSharePriceUnits,
         uint _preferredSharesSelling,
-        uint _preferredSharesPrice,
-        string _preferredSharePriceUnits)
+        uint _preferredSharesPrice)
     {
         uint _sellerIndex = checkIfAlreadyOwner(_sellerAddress);
         
         _ownerName = shareOwnership[_sellerIndex].ownerName;
-        uint _cSale = shareOwnership[_sellerIndex].isCommonShare[true].sharesForSale;
-        uint _pSale = shareOwnership[_sellerIndex].isCommonShare[false].sharesForSale;
-        if (_cSale > 0) {
-            _commonSharesSelling = _cSale;
-            uint _cPriceFormatted = shareOwnership[_sellerIndex].isCommonShare[true].shareSalePrice;
-            uint _cLCD = lowestCommonDenominatorPrice(_cPriceFormatted);
-            _commonSharesPrice = _cPriceFormatted / _cLCD;
-            _commonSharePriceUnits = lowestCommonDenominatorString(_cLCD);
-        }
-        if (_pSale > 0) {
-            _preferredSharesSelling = _pSale;
-            uint _pPriceFormatted = shareOwnership[_sellerIndex].isCommonShare[false].shareSalePrice;
-            uint _pLCD = lowestCommonDenominatorPrice(_pPriceFormatted);
-            _preferredSharesPrice = _pPriceFormatted / _pLCD;
-            _preferredSharePriceUnits = lowestCommonDenominatorString(_pLCD);
-        }
-    }
-    
-    //getPendingShares.
-    
-    function nameCompany(string _name) onlyowner {
-        companyId.name = _name;
-        companyId.nameSetTime = now;
-    }
-    
-    function saveArticles(string _article) {
-        articles.push(_article);
-    }
-    
-    function setNewShareValue(uint _val, string _unit) {
-        uint _newValue = _val * currencyCheck(_unit);
-            
-        uint _ownerIndex = checkIfAlreadyOwner(msg.sender);
-        if (_ownerIndex > shareOwnership.length)
-            throw;
-    
-        uint _commonShares = shareOwnership[_ownerIndex].isCommonShare[true].sharesOwned;
-        if (_commonShares == 0)
-            throw;
-            
-        uint _lastVoted = votingFor["newShareValue"].ownerAddress[msg.sender].lastVotedSubject;
-        if (votingFor["newShareValue"].ownerAddress[msg.sender].alreadyVoted) {
-            if (_lastVoted > 0) 
-                votingFor["newShareValue"].ownerAddress[msg.sender].subject[_lastVoted].sharesVotingFor = 0;
-        }
-        else {
-            votingFor["newShareValue"].ownersVotedArray.push(msg.sender);
-            votingFor["newShareValue"].ownerAddress[msg.sender].alreadyVoted = true;
-        }
-            
-        votingFor["newShareValue"].ownerAddress[msg.sender].subject[_newValue].sharesVotingFor += _commonShares;
-        _lastVoted = _newValue;
+
+        _commonSharesSelling = shareOwnership[_sellerIndex].isCommonShare[true].sharesForSale;
+        _commonSharesPrice = shareOwnership[_sellerIndex].isCommonShare[true].shareSalePrice;
         
-        //checkIfAlreadyOnVoterList(msg.sender, votingFor["newShareValue"]); prolly not needed
-        
-        if ((countVotes("newShareValue", _newValue)* 100) / commonShares >= majority)
-            sharePrice = _newValue;
+        _preferredSharesSelling = shareOwnership[_sellerIndex].isCommonShare[false].sharesForSale;
+        _preferredSharesPrice = shareOwnership[_sellerIndex].isCommonShare[false].shareSalePrice;
     }
+    
     //The following are helper functions
     function checkIfAlreadyOwner(address _ownerAddress) private returns (uint) {
         if (shareOwnership.length == 0)
@@ -336,11 +352,21 @@ contract Company {
     function countVotes(string _votingFor, uint _subject) private returns (uint) {
         uint _voteTotal = 0;
         address[] _voterArray = votingFor[_votingFor].ownersVotedArray;
-        for (uint i = 0; i < _voterArray.length; i++) {
+        for (uint i = 0; i < _voterArray.length; i++)
             _voteTotal += votingFor[_votingFor].ownerAddress[_voterArray[i]].subject[_subject].sharesVotingFor;
-        }
+        
         return _voteTotal;
     }
+    
+    function countTargetedVotes(string _votingFor, uint _subject, address _target) private returns (uint) {
+        uint _voteTotal = 0;
+        address[] _voterArray = votingFor[_votingFor].ownersVotedArray;
+        for (uint i = 0; i < _voterArray.length; i++)
+            _voteTotal += votingFor[_votingFor].ownerAddress[_voterArray[i]].target[_target].subject[_subject].sharesVotingFor;
+        
+        return _voteTotal;
+    }
+    
     
     function currencyCheck(string _unit) private returns (uint) {
         if (stringsEqual(_unit, "szabo"))
@@ -354,27 +380,6 @@ contract Company {
         else
             throw;
     }
-    
-    function lowestCommonDenominatorPrice(uint _price) private returns (uint) {
-        uint64[4] memory priceArray = [1 ether, 1 finney, 1 szabo, 1 wei];
-        for (uint i = 0; i < priceArray.length; i++) 
-            if (_price / priceArray[i] > 0)
-                return priceArray[i];
-            
-        throw;
-    }
-    
-    function lowestCommonDenominatorString(uint _unit) private returns (string) {
-        uint64[4] memory priceArray = [1 ether, 1 finney, 1 szabo, 1 wei];
-        if (_unit / priceArray[0] == 1)
-            return "ether";
-        else if (_unit / priceArray[1] == 1)
-            return "finney";
-        else if (_unit /priceArray[2] == 1)
-            return "szabo";
-        else
-            return "wei";
-    }
 
 	function stringsEqual(string _a, string _b) private returns (bool) {
 	    if (sha3(_a) == sha3(_b))
@@ -382,4 +387,16 @@ contract Company {
 	    else
 	        return false;
 	}
+	
+	//Experimental function to be able to send to contracts with expensive fallback functions
+	//Works yay
+	function safeSend(address _receiver, uint _amtToSend) private {
+	    if (_amtToSend > 0) {
+    	    bool success = _receiver.send(_amtToSend);
+    	    if (!success) {
+    	        _receiver.call.value(_amtToSend);//.gas
+    	    }
+	    }
+	}
+	
 }
